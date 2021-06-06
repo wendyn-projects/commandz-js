@@ -19,14 +19,14 @@ export function tokenize(input: string) : string[] {
     return tokenVals;
 }
 
-export abstract class OptionBase {
+export abstract class OptionBase<T> {
 
-    protected unparsed: string[];
-    public name: string;
+    protected unparsed: string[]|null = null;
+    public name: string[];
     public isValid: boolean = false;
-    public result: some|null;
+    public result: T|null = null;
 
-    public constructor(name: string) {
+    public constructor(name: string[]) {
         this.name = name;
     }
 
@@ -41,9 +41,13 @@ export abstract class OptionBase {
     public abstract parse(): void;
 }
 
-export abstract class Option<T extends some> extends OptionBase {
+export abstract class Option<T extends some> extends OptionBase<T> {
 
-    public result: T;
+    public result: T|null = null;
+
+    public constructor(name: string) {
+        super([name]);
+    }
 
     public getTokensUsed(): number {
         return 1;
@@ -56,9 +60,10 @@ export abstract class Option<T extends some> extends OptionBase {
 
     protected abstract parser(input: string[]) : T;
 
+    //Is called only if `this.isValid` is true
     public parse(): void {
         if(this.isValid)
-            this.result = this.parser(this.unparsed);
+            this.result = this.parser(<string[]>this.unparsed);
     }
 }
 
@@ -74,8 +79,9 @@ export class NumberOption extends Option<number> {
         }
     }
 
+    //Is called only if `this.isValid` is true
     protected parser(): number {
-        return this.result;
+        return <number>this.result;
     }
 }
 
@@ -87,7 +93,7 @@ export class StringOption extends Option<string> {
 
     //Is called only if `this.isValid` is true
     protected parser(): string {
-        return <string>this.unparsed[0];
+        return (<string[]>this.unparsed)[0];
     }
 }
 
@@ -95,30 +101,31 @@ export class ActionResult extends Array<ActionResult|any> {
     [key: string]: ActionResult|any;
 }
 
-export abstract class ValueAction<T extends some|null = some|null> extends OptionBase {
+export abstract class ValueAction<T = any> extends OptionBase<T> {
 
-    public result: T;
-    public usesName: boolean;
     private tokensUsed: number;
-    public options: OptionBase[];
-    public unparsed: ActionResult;
+    public usesName: boolean;
+    public usedName: string|null|undefined = null;
+    public options: OptionBase<any>[];
+    public unparsed: ActionResult|null = null;
     public value: any;
 
-    public constructor(name: string, options: OptionBase[], usesName: boolean = true) {
+    public constructor(name: string[], options: OptionBase<any>[], usesName: boolean = true) {
         super(name);
         this.value = {};
         this.options = options;
         this.usesName = usesName;
         this.tokensUsed = options.reduce(
-            (accumulator: number, option: OptionBase) => accumulator + option.getTokensUsed(), usesName? 1: 0);
+            (accumulator: number, option: OptionBase<any>) => accumulator + option.getTokensUsed(), usesName? 1: 0);
     }
 
     public getTokensUsed(): number {
         return this.tokensUsed;
     }
 
+    //Is called from `this.validate` where `this.unparsed` is set
     protected nameCheck(): boolean {
-        return this.name.split(/\|/).some((name: string) => name === this.unparsed[0]);
+        return (this.usedName = this.name.find((name: string) => name === (<string[]>this.unparsed)[0]))? true: false;
     }
 
     protected validation(input: string[]): boolean {
@@ -146,12 +153,13 @@ export abstract class ValueAction<T extends some|null = some|null> extends Optio
             this.validation(this.usesName? Array.from(input).slice(1): input);
     }
 
+    //Is called only if `this.isValid` is true
     public parse() {
 
         for(let i = 0; i < this.options.length; i++) {
             let option = this.options[i];
             option.parse();
-            this.value[this.options[i].name] = option instanceof ValueAction? 
+            this.value[<string>this.usedName] = option instanceof ValueAction? 
                 option.value:
                 option.result;
         }
@@ -176,15 +184,14 @@ export enum SelectionMode {
     BEST_MATCH_LAST,
 }
 
-export class ActionSelector<T extends some|null = some|null> extends ValueAction<T> {
+export class ActionSelector<T = any> extends ValueAction<T> {
 
     public options: ValueAction<T>[];
-    public usedAction: ValueAction<T>|null;
+    public usedAction: ValueAction<T>|null = null;
     public select: SelectionMode;
 
-    public constructor(name: string, options: ValueAction<T>[], usesName: boolean = true, select: SelectionMode = SelectionMode.FIRST) {
+    public constructor(name: string[], options: ValueAction<T>[], usesName: boolean = true, select: SelectionMode = SelectionMode.FIRST) {
         super(name, options, usesName);
-        this.usedAction = null;
         this.select = select;
     }
 
@@ -251,7 +258,7 @@ export class ActionSelector<T extends some|null = some|null> extends ValueAction
 
     //Is called only if `this.isValid` is true
     protected execution(): T {
-        return (<ValueAction<T>>this.usedAction).result;
+        return <T>(<ValueAction<T>>this.usedAction).result;
     }
 
     public execute(input?: string[]): void {
