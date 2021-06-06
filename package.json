@@ -1,0 +1,31 @@
+{
+  "name": "commandz",
+  "version": "1.0.0",
+  "description": "Command-line argument parser",
+  "main": "lib/commandz.js",
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wendyn-projects/commandz-js.git"
+  },
+  "keywords": [
+    "cmd",
+    "command",
+    "line",
+    "terminal",
+    "argument",
+    "parser"
+  ],
+  "author": "Vaclav [WENDYN] Nemec",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/wendyn-projects/commandz-js/issues"
+  },
+  "homepage": "https://github.com/wendyn-projects/commandz-js#readme",
+  "devDependencies": {
+    "typescript": "^4.3.2"
+  }
+}
