@@ -98,7 +98,7 @@ export class ActionResult extends Array<ActionResult|any> {
 export abstract class ValueAction<T extends some|null = some|null> extends OptionBase {
 
     public result: T;
-    public usesName: boolean = true;
+    public usesName: boolean;
     private tokensUsed: number;
     public options: OptionBase[];
     public unparsed: ActionResult;
