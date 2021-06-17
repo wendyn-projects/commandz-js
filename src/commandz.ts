@@ -1,5 +1,9 @@
-type some = string|number|boolean|object;
-
+/**
+ * Tokenizes a string into string[].
+ * @param input is the string to be tokenized.
+ * @returns tokenized input.
+ * @example tokenize('aaa aaa "aaa aaa" aaa"aaa') => ['aaa', 'aaa', 'aaa aaa', 'aaa"aaa']
+ */
 export function tokenize(input: string) : string[] {
     //space/quote separating RegEx tokenizer
     const TOKENIZER = /(?:")([^"]*)(?:")|(?:')([^']*)(?:')|(?:`)([^`]*)(?:`)|([^\s]+)/gm;
@@ -19,161 +23,209 @@ export function tokenize(input: string) : string[] {
     return tokenVals;
 }
 
-export abstract class OptionBase<T> {
-
-    protected unparsed: string[]|null = null;
-    public name: string[];
-    public isValid: boolean = false;
-    public result: T|null = null;
-
-    public constructor(name: string[]) {
-        this.name = name;
-    }
-
-    public abstract getTokensUsed(): number;
-
-    protected abstract validation(input: string[]): boolean;
-
-    public validate(input: string[]): void {
-        this.isValid = this.validation(input);
-    }
-
-    public abstract parse(): void;
+class OptionResults extends Array<OptionResults|any> {
+    [key: string]: OptionResults|any;
 }
 
-export abstract class Option<T extends some> extends OptionBase<T> {
+export abstract class Action<T = any> {
 
-    public result: T|null = null;
+    private _hasName: boolean;
+    private _names: ReadonlyArray<string>|undefined;
+    private _isCalledByName: boolean;
+    private _input: ReadonlyArray<string>|undefined;
+    private _tokensUsed: number|undefined;
+    protected _options: Action<any>[];
+    /**
+     * Contains the results of individual options.
+     */
+    protected _optionResults: OptionResults = [];
+    protected _isValid: boolean = false;
+    protected _result: T|undefined;
 
-    public constructor(name: string) {
-        super([name]);
-    }
-
-    public getTokensUsed(): number {
-        return 1;
-    }
-
-    public validate(input: string[]): void {
-        this.unparsed = input;
-        super.validate(input);
-    }
-
-    protected abstract parser(input: string[]) : T;
-
-    //Is called only if `this.isValid` is true
-    public parse(): void {
-        if(this.isValid)
-            this.result = this.parser(<string[]>this.unparsed);
-    }
-}
-
-export class NumberOption extends Option<number> {
-
-    protected validation(input: string[]): boolean {
-        let output = Number(input[0]);
-        if(isNaN(output)) {
-            return false
+    public constructor(options: Action<any>[], names?: string[], isCalledByName: boolean = true) {
+        if(names !== undefined && names.length > 0) {
+            this._hasName = true;
+            this._names = names;
+            this._isCalledByName = isCalledByName;
         } else {
-            this.result = output;
+            this._hasName = false;
+            this._isCalledByName = false;
+        }
+        this._options = options;
+    }
+    
+    public get hasName(): boolean {
+        return this._hasName;
+    }
+
+    public get names(): ReadonlyArray<string>|undefined {
+        return this._names;
+    }
+
+    public get isCalledByName(): boolean {
+        return this._isCalledByName;
+    }
+
+    public get input(): ReadonlyArray<string>|undefined {
+        return this._input;
+    }
+
+    public get isValid(): boolean|undefined {
+        return this._isValid;
+    }
+
+    /**
+     * @returns number of used input tokens if `this.isValid` is true, otherwise `undefined`.
+     */
+    public get tokensUsed(): number|undefined {
+        return this._isValid? this._tokensUsed: undefined;
+    }
+
+    /**
+     * @returns result of `this.run`
+     */
+    public get result(): T|undefined {
+        return this._result;
+    }
+
+    protected checkName(usedName: string): boolean {
+        return (<string[]>this._names).some((name: string) => name === usedName);
+    }
+
+    protected validateOptions(): boolean {
+        let input = <string[]>this.input;
+        let tokenId = 0;
+
+        for(let i = 0; i < this._options.length && tokenId <= input.length; i++) {
+
+            this._options[i].validate(input.slice(tokenId));
+
+            if(this._options[i]._isValid)
+                tokenId += <number>this._options[i].tokensUsed;
+            else 
+                return false;
+        }
+
+        this._tokensUsed = this.hasName? tokenId + 1: tokenId;
+
+        return true;
+    }
+
+    /**
+     * Custom Input Validation (the input is stored in `this.input`)
+     * @returns validity of the input.
+     */
+    protected abstract validation(): boolean;
+
+    /**
+     * Validates the input.
+     * @param input is the input to be validated.
+     * @returns validity of the input.
+     */
+    public validate(input: ReadonlyArray<string>): boolean {
+
+        this._tokensUsed = undefined;
+        this._result = undefined;
+
+        if(this.isCalledByName) {
+            if(this.checkName(input[0]))
+                this._input = Array.from(input).slice(1);
+            else 
+                return false;
+        } else {
+            this._input = input;
+        }
+        
+        return this.validateOptions()? this._isValid = this.validation(): false;
+    }
+
+    /**
+     * Is called by `this.run` and only if `this.isValid` is true.
+     * Collects all results from `this.options`.
+     */
+    protected runOptions(): OptionResults {
+
+        let optionResults: OptionResults = [];
+
+        for(const option of this._options) {
+
+            option.run();
+            if(option.hasName)
+                optionResults[(<string[]>option.names)[0]] = option._result;
+
+            optionResults.push(option._result);
+        }
+        return optionResults;
+    }
+
+    /**
+     * Is called by `this.run` and only if `this.isValid` is true.
+     * @returns result of this option.
+     */
+    protected abstract runner(): T;
+
+    /**
+     * Generates the result of this option.
+     * @param input is used as input for this option, but if the option was validated before the input isn't requiered.
+     * @returns result of this option.
+     */
+    public run(input?: string[]): T|undefined {
+
+        if(input) {
+            this.validate(input);
+        }
+
+        if(this._isValid) {
+            this._optionResults = this.runOptions();
+            this._result = this.runner();
+        } else {
+            this._optionResults = [];
+        }
+
+        return this._result;
+    }
+}
+
+export abstract class SimpleOption<T extends any> extends Action<T> {
+
+    public constructor(names?: string[], isCalledByName: boolean = false) {
+        super([], names, isCalledByName);
+    }
+
+    public get tokensUsed(): number|undefined {
+        return this._isValid? this.isCalledByName? 2: 1: undefined;
+    }
+
+    protected abstract validation(): boolean;
+
+    protected abstract runner(): T;
+}
+
+export class NumberParser extends SimpleOption<number> {
+
+    protected validation(): boolean {
+        let output = Number((<string[]>this.input)[0]);
+        if(isNaN(output)) {
+            return false;
+        } else {
+            this._result = output;
             return true;
         }
     }
 
-    //Is called only if `this.isValid` is true
-    protected parser(): number {
-        return <number>this.result;
+    protected runner(): number {
+        return <number>this._result;
     }
 }
 
-export class StringOption extends Option<string> {
+export class StringParser extends SimpleOption<string> {
 
-    protected validation(input: string[]): boolean {
-        return input.length !== 0;
+    protected validation(): boolean {
+        return (<string[]>this.input).length !== 0;
     }
 
-    //Is called only if `this.isValid` is true
-    protected parser(): string {
-        return (<string[]>this.unparsed)[0];
-    }
-}
-
-export class ActionResult extends Array<ActionResult|any> {
-    [key: string]: ActionResult|any;
-}
-
-export abstract class ValueAction<T = any> extends OptionBase<T> {
-
-    private tokensUsed: number;
-    public usesName: boolean;
-    public usedName: string|null|undefined = null;
-    public options: OptionBase<any>[];
-    public unparsed: ActionResult|null = null;
-    public value: any;
-
-    public constructor(name: string[], options: OptionBase<any>[], usesName: boolean = true) {
-        super(name);
-        this.value = {};
-        this.options = options;
-        this.usesName = usesName;
-        this.tokensUsed = options.reduce(
-            (accumulator: number, option: OptionBase<any>) => accumulator + option.getTokensUsed(), usesName? 1: 0);
-    }
-
-    public getTokensUsed(): number {
-        return this.tokensUsed;
-    }
-
-    //Is called from `this.validate` where `this.unparsed` is set
-    protected nameCheck(): boolean {
-        return (this.usedName = this.name.find((name: string) => name === (<string[]>this.unparsed)[0]))? true: false;
-    }
-
-    protected validation(input: string[]): boolean {
-
-        let isValidTmp = true;
-        let tokenId = 0;
-
-        for(let i = 0; i < this.options.length && isValidTmp; i++) {
-
-            this.options[i].validate(input.slice(tokenId));
-
-            let tokensUsed = this.options[i].getTokensUsed();
-            tokenId += tokensUsed;
-            isValidTmp &&= tokenId >= input.length && this.options[i].isValid;
-
-        }
-
-        return isValidTmp && tokenId <= input.length;
-    }
-
-    public validate(input: string[]): void {
-        this.unparsed = input;
-        this.isValid = 
-            (!this.usesName || this.nameCheck()) && 
-            this.validation(this.usesName? Array.from(input).slice(1): input);
-    }
-
-    //Is called only if `this.isValid` is true
-    public parse() {
-
-        for(let i = 0; i < this.options.length; i++) {
-            let option = this.options[i];
-            option.parse();
-            this.value[<string>this.usedName] = option instanceof ValueAction? 
-                option.value:
-                option.result;
-        }
-    }
-
-    protected abstract execution(): T;
-
-    public execute(input?: string[]): void {
-        if(!this.isValid && input) {
-            this.validate(input);
-            this.parse();
-        }
-        if(this.isValid)
-            this.result = this.execution();
+    protected runner(): string {
+        return (<string[]>this.input)[0];
     }
 }
 
@@ -184,93 +236,105 @@ export enum SelectionMode {
     BEST_MATCH_LAST,
 }
 
-export class ActionSelector<T = any> extends ValueAction<T> {
+export class ActionSelector<T = any> extends Action<T> {
 
-    public options: ValueAction<T>[];
-    public usedAction: ValueAction<T>|null = null;
-    public select: SelectionMode;
+    protected _usedAction: Action<T>|undefined;
+    protected _mode: SelectionMode;
 
-    public constructor(name: string[], options: ValueAction<T>[], usesName: boolean = true, select: SelectionMode = SelectionMode.FIRST) {
-        super(name, options, usesName);
-        this.select = select;
+    public constructor(options: Action<T>[], names: string[], isCalledByName: boolean = true, select: SelectionMode = SelectionMode.FIRST) {
+        super(options, names, isCalledByName);
+        this._mode = select;
     }
 
-    protected validation(input: string[]): boolean {
+    public get usedAction(): Action<T>|undefined {
+        return this._usedAction;
+    }
+
+    public get mode(): SelectionMode {
+        return this._mode;
+    }
+
+    public set mode(value: SelectionMode) {
+        this._mode = value;
+    }
+
+    protected validateOptions(): boolean {
 
         let action;
+        let input = <string[]>this.input;
         let prevTokenCount = -1;
         let tokenCount;
 
-        switch(this.select) {
+        switch(this._mode) {
         case SelectionMode.LAST:
-            for(let i = 0; i < this.options.length; i++) {
-                action = this.options[i];
+            for(let i = 0; i < this._options.length; i++) {
+                action = this._options[i];
                 action.validate(input);
                 if(action.isValid)
-                    this.usedAction = action;
+                    this._usedAction = action;
             }
             break;
         case SelectionMode.BEST_MATCH_FIRST:
-            for(let i = 0; i < this.options.length; i++) {
-                action = this.options[i];
+            for(let i = 0; i < this._options.length; i++) {
+                action = this._options[i];
                 action.validate(input);
-                if(action.isValid && (tokenCount = action.getTokensUsed()) > prevTokenCount) {
-                    this.usedAction = action;
+                if(action.isValid && (tokenCount = <number>action.tokensUsed) > prevTokenCount) {
+                    this._usedAction = action;
                     prevTokenCount = tokenCount;
                 }
             }
             break;
         case SelectionMode.BEST_MATCH_FIRST:
-            for(let i = 0; i < this.options.length; i++) {
-                action = this.options[i];
+            for(let i = 0; i < this._options.length; i++) {
+                action = this._options[i];
                 action.validate(input);
-                if(action.isValid && (tokenCount = action.getTokensUsed()) >= prevTokenCount) {
-                    this.usedAction = action;
+                if(action.isValid && (tokenCount = <number>action.tokensUsed) >= prevTokenCount) {
+                    this._usedAction = action;
                     prevTokenCount = tokenCount;
                 }
             }
             break;
         default:
-            for(let i = 0; i < this.options.length; i++) {
-                action = this.options[i];
+            for(let i = 0; i < this._options.length; i++) {
+                action = this._options[i];
                 action.validate(input);
                 if(action.isValid) {
-                    this.usedAction = action;
+                    this._usedAction = action;
                     break;
                 }
             }
             break;
         }
 
-        return this.usedAction? true: false;
+        return this._usedAction? true: false;
     }
 
-    //Is called only if `this.isValid` is true
-    protected parser(input?: ActionResult) : ActionResult {
-        (<ValueAction<T>>this.usedAction).parse();
-        return (<ValueAction<T>>this.usedAction).value;
+    protected validation(): boolean {
+        return true;
     }
 
-    public parse() {
-        if(this.isValid)
-            this.value = this.parser();
+    public validate(input: ReadonlyArray<string>): boolean {
+        this._usedAction = undefined;
+        return super.validate(input);
     }
 
-    //Is called only if `this.isValid` is true
-    protected execution(): T {
-        return <T>(<ValueAction<T>>this.usedAction).result;
+    protected runner(): T {
+        return <T>(<Action<T>>this._usedAction).result;
     }
 
-    public execute(input?: string[]): void {
+    public run(input?: string[]): T|undefined {
 
-        if(!this.isValid && input) {
+        if(input) {
             this.validate(input);
-            this.parse();
         }
-        if(this.isValid) {
-            //`this.isValid` can be true only if the used action was chosen
-            (<ValueAction<T>>this.usedAction).execute();
-            this.result = this.execution();
+
+        if(this._isValid) {
+            this._optionResults = this.runOptions();
+            this._result = this.runner();
+        } else {
+            this._optionResults = [];
         }
+
+        return this._result;
     }
 }
